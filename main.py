@@ -316,13 +316,12 @@ class ClipboardSharerApp(tk.Tk):
             self._last_pulled_clipboard = None
             self._pull_poll_clipboard()
         else:
-            # Enable polling for all platforms except GNOME desktops
-            is_gnome = os.environ.get('XDG_CURRENT_DESKTOP', '').lower() == 'gnome'
-            if not is_gnome:
+            # Only enable polling on Windows and macOS
+            if sys.platform.startswith('win') or sys.platform == 'darwin':
                 self._last_polled_clipboard = None
                 self._poll_clipboard_auto()
             else:
-                self._log("[SERVER] No polling thread started (GNOME desktop detected, server mode, no --connect).")
+                self._log("[SERVER] No polling thread started (Linux detected, server mode, no --connect).")
 
     def _build_ui(self):
         self.attributes('-topmost', True)
@@ -544,9 +543,18 @@ class ClipboardSharerApp(tk.Tk):
                     display_src = src
                 else:
                     display_src = "local"
-                self.min_last_update_label.config(text=f"{elapsed}s ago from {display_src}")
+                # Determine color and dot
+                if elapsed < 30:
+                    dot_color = "#00cc44"  # Green
+                elif elapsed < 120:
+                    dot_color = "#ff9900"  # Orange
+                else:
+                    dot_color = "#cc0000"  # Red
+                dot = "\u25CF"  # Big dot
+                text = f"{dot} {elapsed}s ago from {display_src}"
+                self.min_last_update_label.config(text=text, foreground=dot_color)
             else:
-                self.min_last_update_label.config(text="never")
+                self.min_last_update_label.config(text="never", foreground="black")
         # Big window label
         if hasattr(self, 'big_last_update_label'):
             if self.last_update_time:
@@ -556,9 +564,17 @@ class ClipboardSharerApp(tk.Tk):
                     display_src = src
                 else:
                     display_src = "local"
-                self.big_last_update_label.config(text=f"Last updated: {elapsed}s ago from {display_src}")
+                if elapsed < 30:
+                    dot_color = "#00cc44"
+                elif elapsed < 120:
+                    dot_color = "#ff9900"
+                else:
+                    dot_color = "#cc0000"
+                dot = "\u25CF"
+                text = f"{dot} Last updated: {elapsed}s ago from {display_src}"
+                self.big_last_update_label.config(text=text, foreground=dot_color)
             else:
-                self.big_last_update_label.config(text="never")
+                self.big_last_update_label.config(text="never", foreground="black")
         self.after(1000, self._poll_last_update_label)
 
     def _minimize_ui(self):
