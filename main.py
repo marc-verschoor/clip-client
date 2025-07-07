@@ -315,11 +315,14 @@ class ClipboardSharerApp(tk.Tk):
             self._pull_poll_interval = 2  # seconds
             self._last_pulled_clipboard = None
             self._pull_poll_clipboard()
-        elif sys.platform.startswith('win') or sys.platform == 'darwin':
-            self._last_polled_clipboard = None
-            self._poll_clipboard_auto()
         else:
-            self._log("[SERVER] No polling thread started (server mode, no --connect).")
+            # Enable polling for all platforms except GNOME desktops
+            is_gnome = os.environ.get('XDG_CURRENT_DESKTOP', '').lower() == 'gnome'
+            if not is_gnome:
+                self._last_polled_clipboard = None
+                self._poll_clipboard_auto()
+            else:
+                self._log("[SERVER] No polling thread started (GNOME desktop detected, server mode, no --connect).")
 
     def _build_ui(self):
         self.attributes('-topmost', True)
