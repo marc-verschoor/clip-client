@@ -324,61 +324,74 @@ class ClipboardSharerApp(tk.Tk):
                 self._log("[SERVER] No polling thread started (Linux detected, server mode, no --connect).")
 
     def _build_ui(self):
+        import tkinter.font as tkfont
         self.attributes('-topmost', True)
+        small_font = tkfont.Font(size=9)
+        italic_font = tkfont.Font(size=9, slant="italic")
+        bold_dot_font = tkfont.Font(size=12, weight="bold")
         self.normal_frame = ttk.Frame(self)
         self.normal_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         # Clip button at the top
-        self.clip_btn = ttk.Button(self.normal_frame, text="Clip", command=self._on_clip_btn)
+        self.clip_btn = ttk.Button(self.normal_frame, text="Clip", command=self._on_clip_btn, style="Small.TButton")
         self.clip_btn.grid(row=0, column=0, pady=(0, 10), sticky=tk.W)
         # Minimize button
-        self.min_btn = ttk.Button(self.normal_frame, text="Minimize", command=self._minimize_ui)
+        self.min_btn = ttk.Button(self.normal_frame, text="Minimize", command=self._minimize_ui, style="Small.TButton")
         self.min_btn.grid(row=0, column=1, pady=(0, 10), sticky=tk.W)
 
         # Host IP
-        ttk.Label(self.normal_frame, text="Host IP:").grid(row=1, column=0, sticky=tk.W)
+        ttk.Label(self.normal_frame, text="Host IP:", font=small_font).grid(row=1, column=0, sticky=tk.W)
         self.host_var = tk.StringVar(value=get_default_interface_ip())
-        ttk.Entry(self.normal_frame, textvariable=self.host_var, width=20).grid(row=1, column=1, sticky=tk.W)
+        ttk.Entry(self.normal_frame, textvariable=self.host_var, width=20, font=small_font).grid(row=1, column=1, sticky=tk.W)
 
         # Port
-        ttk.Label(self.normal_frame, text="Port:").grid(row=2, column=0, sticky=tk.W)
+        ttk.Label(self.normal_frame, text="Port:", font=small_font).grid(row=2, column=0, sticky=tk.W)
         self.port_var = tk.IntVar(value=DEFAULT_PORT)
-        ttk.Entry(self.normal_frame, textvariable=self.port_var, width=8).grid(row=2, column=1, sticky=tk.W)
+        ttk.Entry(self.normal_frame, textvariable=self.port_var, width=8, font=small_font).grid(row=2, column=1, sticky=tk.W)
 
         # Nickname
-        ttk.Label(self.normal_frame, text="Nickname:").grid(row=3, column=0, sticky=tk.W)
+        ttk.Label(self.normal_frame, text="Nickname:", font=small_font).grid(row=3, column=0, sticky=tk.W)
         self.nick_var = tk.StringVar(value=platform.node())
-        ttk.Entry(self.normal_frame, textvariable=self.nick_var, width=20).grid(row=3, column=1, sticky=tk.W)
+        ttk.Entry(self.normal_frame, textvariable=self.nick_var, width=20, font=small_font).grid(row=3, column=1, sticky=tk.W)
 
         # Connect to
-        ttk.Label(self.normal_frame, text="Connect to (comma-separated):").grid(row=4, column=0, sticky=tk.W)
+        ttk.Label(self.normal_frame, text="Connect to (comma-separated):", font=small_font).grid(row=4, column=0, sticky=tk.W)
         self.connect_var = tk.StringVar()
-        ttk.Entry(self.normal_frame, textvariable=self.connect_var, width=40).grid(row=4, column=1, sticky=tk.W)
+        ttk.Entry(self.normal_frame, textvariable=self.connect_var, width=40, font=small_font).grid(row=4, column=1, sticky=tk.W)
 
         # Watch dir (optional)
-        ttk.Label(self.normal_frame, text="Watch Dir (macOS):").grid(row=5, column=0, sticky=tk.W)
+        ttk.Label(self.normal_frame, text="Watch Dir (macOS):", font=small_font).grid(row=5, column=0, sticky=tk.W)
         self.watch_dir_var = tk.StringVar()
-        ttk.Entry(self.normal_frame, textvariable=self.watch_dir_var, width=40).grid(row=5, column=1, sticky=tk.W)
-        ttk.Button(self.normal_frame, text="Browse", command=self._browse_dir).grid(row=5, column=2, sticky=tk.W)
+        ttk.Entry(self.normal_frame, textvariable=self.watch_dir_var, width=40, font=small_font).grid(row=5, column=1, sticky=tk.W)
+        ttk.Button(self.normal_frame, text="Browse", command=self._browse_dir, style="Small.TButton").grid(row=5, column=2, sticky=tk.W)
 
         # Quit button
-        self.quit_btn = ttk.Button(self.normal_frame, text="Quit", command=self.on_quit)
+        self.quit_btn = ttk.Button(self.normal_frame, text="Quit", command=self.on_quit, style="Small.TButton")
         self.quit_btn.grid(row=6, column=0, pady=10)
 
         # Connected clients
-        ttk.Label(self.normal_frame, text="Connected Clients:").grid(row=7, column=0, sticky=tk.W)
+        ttk.Label(self.normal_frame, text="Connected Clients:", font=small_font).grid(row=7, column=0, sticky=tk.W)
         self.clients_var = tk.StringVar()
-        ttk.Label(self.normal_frame, textvariable=self.clients_var).grid(row=7, column=1, sticky=tk.W)
+        ttk.Label(self.normal_frame, textvariable=self.clients_var, font=small_font).grid(row=7, column=1, sticky=tk.W)
 
-        # Last update info (big window)
-        self.big_last_update_label = ttk.Label(self.normal_frame, text="never", font=("TkDefaultFont", 9, "italic"))
-        self.big_last_update_label.grid(row=8, column=0, columnspan=3, sticky=tk.W, pady=(2, 0))
+        # Last update info (big window) - use a frame with two labels (dot and text)
+        self.big_last_update_frame = ttk.Frame(self.normal_frame)
+        self.big_last_update_frame.grid(row=8, column=0, columnspan=3, sticky=tk.W, pady=(2, 0))
+        self.big_last_update_dot = ttk.Label(self.big_last_update_frame, text="", font=bold_dot_font)
+        self.big_last_update_text = ttk.Label(self.big_last_update_frame, text="never", font=italic_font)
+        self.big_last_update_dot.grid(row=0, column=0, sticky=tk.W)
+        self.big_last_update_text.grid(row=0, column=1, sticky=tk.W+tk.E)
+        self.big_last_update_frame.columnconfigure(0, weight=0)
+        self.big_last_update_frame.columnconfigure(1, weight=1)
 
         # Log area
-        self.log_text = tk.Text(self.normal_frame, height=10, width=70, state=tk.DISABLED)
+        self.log_text = tk.Text(self.normal_frame, height=10, width=70, font=small_font, state=tk.DISABLED)
         self.log_text.grid(row=9, column=0, columnspan=3, pady=10)
 
         # Minimized window (Toplevel, created on demand)
         self.minimized_window = None
+        # Style for small buttons
+        style = ttk.Style()
+        style.configure("Small.TButton", font=small_font)
 
     def _browse_dir(self):
         dirname = filedialog.askdirectory()
@@ -425,7 +438,7 @@ class ClipboardSharerApp(tk.Tk):
                             self._log("Clipboard changed: sharing clipboard content.")
                         else:
                             self._log("Clip button pressed: sharing clipboard content.")
-                        self.clipboard_sharer.notify_clients()
+                        threading.Thread(target=self.clipboard_sharer.notify_clients, daemon=True).start()
                         self.last_update_time = time.time()
                         self.last_update_source = "local"
                         # For pull client: track last sent clipboard
@@ -535,14 +548,12 @@ class ClipboardSharerApp(tk.Tk):
 
     def _poll_last_update_label(self):
         # Minimized window label
-        if hasattr(self, 'minimized_window') and self.minimized_window is not None and hasattr(self, 'min_last_update_label'):
+        if hasattr(self, 'minimized_window') and self.minimized_window is not None and hasattr(self, 'min_last_update_dot') and hasattr(self, 'min_last_update_text'):
             if self.last_update_time:
                 elapsed = int(time.time() - self.last_update_time)
                 src = self.last_update_source or "unknown"
-                if src and src != "local":
-                    display_src = src
-                else:
-                    display_src = "local"
+                is_local = (src == "local")
+                display_src = src if src != "local" else "local"
                 # Determine color and dot
                 if elapsed < 30:
                     dot_color = "#00cc44"  # Green
@@ -551,19 +562,35 @@ class ClipboardSharerApp(tk.Tk):
                 else:
                     dot_color = "#cc0000"  # Red
                 dot = "\u25CF"  # Big dot
-                text = f"{dot} {elapsed}s ago from {display_src}"
-                self.min_last_update_label.config(text=text, foreground=dot_color)
+                text = f"{elapsed}s ago from {display_src}"
+                # Clear frame
+                # Clear previous text/dot
+                self.min_last_update_dot.config(text="", foreground="black")
+                self.min_last_update_text.config(text="", foreground="black")
+                if is_local:
+                    self.min_last_update_dot.grid(row=0, column=0, sticky=tk.W)
+                    self.min_last_update_text.grid(row=0, column=1, sticky=tk.W+tk.E)
+                    self.min_last_update_dot.config(text=dot, foreground=dot_color)
+                    self.min_last_update_text.config(text=text, foreground="black", anchor="w", justify="left")
+                    self.min_last_update_frame.grid_columnconfigure(0, weight=0)
+                    self.min_last_update_frame.grid_columnconfigure(1, weight=1)
+                else:
+                    self.min_last_update_text.grid(row=0, column=0, sticky=tk.E+tk.W)
+                    self.min_last_update_dot.grid(row=0, column=1, sticky=tk.E)
+                    self.min_last_update_text.config(text=text, foreground="black", anchor="e", justify="right")
+                    self.min_last_update_dot.config(text=dot, foreground=dot_color)
+                    self.min_last_update_frame.grid_columnconfigure(0, weight=1)
+                    self.min_last_update_frame.grid_columnconfigure(1, weight=0)
             else:
-                self.min_last_update_label.config(text="never", foreground="black")
+                self.min_last_update_dot.config(text="", foreground="black")
+                self.min_last_update_text.config(text="never", foreground="black")
         # Big window label
-        if hasattr(self, 'big_last_update_label'):
+        if hasattr(self, 'big_last_update_dot') and hasattr(self, 'big_last_update_text'):
             if self.last_update_time:
                 elapsed = int(time.time() - self.last_update_time)
                 src = self.last_update_source or "unknown"
-                if src and src != "local":
-                    display_src = src
-                else:
-                    display_src = "local"
+                is_local = (src == "local")
+                display_src = src if src != "local" else "local"
                 if elapsed < 30:
                     dot_color = "#00cc44"
                 elif elapsed < 120:
@@ -571,10 +598,27 @@ class ClipboardSharerApp(tk.Tk):
                 else:
                     dot_color = "#cc0000"
                 dot = "\u25CF"
-                text = f"{dot} Last updated: {elapsed}s ago from {display_src}"
-                self.big_last_update_label.config(text=text, foreground=dot_color)
+                text = f"Last updated: {elapsed}s ago from {display_src}"
+                # Clear previous text/dot
+                self.big_last_update_dot.config(text="", foreground="black")
+                self.big_last_update_text.config(text="", foreground="black")
+                if is_local:
+                    self.big_last_update_dot.grid(row=0, column=0, sticky=tk.W)
+                    self.big_last_update_text.grid(row=0, column=1, sticky=tk.W+tk.E)
+                    self.big_last_update_dot.config(text=dot, foreground=dot_color)
+                    self.big_last_update_text.config(text=text, foreground="black", anchor="w", justify="left")
+                    self.big_last_update_frame.grid_columnconfigure(0, weight=0)
+                    self.big_last_update_frame.grid_columnconfigure(1, weight=1)
+                else:
+                    self.big_last_update_text.grid(row=0, column=0, sticky=tk.E+tk.W)
+                    self.big_last_update_dot.grid(row=0, column=1, sticky=tk.E)
+                    self.big_last_update_text.config(text=text, foreground="black", anchor="e", justify="right")
+                    self.big_last_update_dot.config(text=dot, foreground=dot_color)
+                    self.big_last_update_frame.grid_columnconfigure(0, weight=1)
+                    self.big_last_update_frame.grid_columnconfigure(1, weight=0)
             else:
-                self.big_last_update_label.config(text="never", foreground="black")
+                self.big_last_update_dot.config(text="", foreground="black")
+                self.big_last_update_text.config(text="never", foreground="black")
         self.after(1000, self._poll_last_update_label)
 
     def _minimize_ui(self):
@@ -592,11 +636,17 @@ class ClipboardSharerApp(tk.Tk):
             # Restore button
             restore_btn = ttk.Button(self.minimized_window, text="Restore", command=self._restore_ui)
             restore_btn.grid(row=0, column=1, padx=5, pady=5)
-            # Last updated label
+            # Last updated label (frame with dot and text)
             import tkinter.font as tkfont
             small_font = tkfont.Font(size=8)
-            self.min_last_update_label = ttk.Label(self.minimized_window, text="never", font=small_font)
-            self.min_last_update_label.grid(row=1, column=0, columnspan=2, pady=(2, 0))
+            self.min_last_update_frame = ttk.Frame(self.minimized_window)
+            self.min_last_update_frame.grid(row=1, column=0, columnspan=2, pady=(2, 0))
+            self.min_last_update_dot = ttk.Label(self.min_last_update_frame, text="", font=small_font)
+            self.min_last_update_text = ttk.Label(self.min_last_update_frame, text="never", font=small_font)
+            self.min_last_update_dot.grid(row=0, column=0, sticky=tk.W)
+            self.min_last_update_text.grid(row=0, column=1, sticky=tk.W+tk.E)
+            self.min_last_update_frame.columnconfigure(0, weight=0)
+            self.min_last_update_frame.columnconfigure(1, weight=1)
             self.minimized_window.protocol("WM_DELETE_WINDOW", self.on_quit)
             # Add drag support
             self._add_drag_support(self.minimized_window)
