@@ -315,7 +315,7 @@ class ClipboardSharerApp(tk.Tk):
             self._pull_poll_interval = 2  # seconds
             self._last_pulled_clipboard = None
             self._pull_poll_clipboard()
-        elif not sys.platform.startswith('linux'):
+        elif sys.platform.startswith('win') or sys.platform == 'darwin':
             self._last_polled_clipboard = None
             self._poll_clipboard_auto()
         else:
@@ -367,9 +367,13 @@ class ClipboardSharerApp(tk.Tk):
         self.clients_var = tk.StringVar()
         ttk.Label(self.normal_frame, textvariable=self.clients_var).grid(row=7, column=1, sticky=tk.W)
 
+        # Last update info (big window)
+        self.big_last_update_label = ttk.Label(self.normal_frame, text="never", font=("TkDefaultFont", 9, "italic"))
+        self.big_last_update_label.grid(row=8, column=0, columnspan=3, sticky=tk.W, pady=(2, 0))
+
         # Log area
         self.log_text = tk.Text(self.normal_frame, height=10, width=70, state=tk.DISABLED)
-        self.log_text.grid(row=8, column=0, columnspan=3, pady=10)
+        self.log_text.grid(row=9, column=0, columnspan=3, pady=10)
 
         # Minimized window (Toplevel, created on demand)
         self.minimized_window = None
@@ -506,19 +510,43 @@ class ClipboardSharerApp(tk.Tk):
                 self._ignore_next_clipboard_poll = True
                 self._log("Clipboard updated from remote.")
                 self.last_update_time = time.time()
-                self.last_update_source = "remote"
+                # Try to extract nick from content
+                nick = None
+                if content.startswith("TEXT:"):
+                    parts = content.split(":", 2)
+                    if len(parts) == 3:
+                        nick = parts[1]
+                self.last_update_source = nick if nick else "remote"
+                self.last_remote_nick = nick
         except Empty:
             pass
         self.after(200, self._poll_clipboard_set_queue)
 
     def _poll_last_update_label(self):
+        # Minimized window label
         if hasattr(self, 'minimized_window') and self.minimized_window is not None and hasattr(self, 'min_last_update_label'):
             if self.last_update_time:
                 elapsed = int(time.time() - self.last_update_time)
                 src = self.last_update_source or "unknown"
-                self.min_last_update_label.config(text=f"{elapsed}s ago from {src}")
+                if src and src != "local":
+                    display_src = src
+                else:
+                    display_src = "local"
+                self.min_last_update_label.config(text=f"{elapsed}s ago from {display_src}")
             else:
                 self.min_last_update_label.config(text="never")
+        # Big window label
+        if hasattr(self, 'big_last_update_label'):
+            if self.last_update_time:
+                elapsed = int(time.time() - self.last_update_time)
+                src = self.last_update_source or "unknown"
+                if src and src != "local":
+                    display_src = src
+                else:
+                    display_src = "local"
+                self.big_last_update_label.config(text=f"Last updated: {elapsed}s ago from {display_src}")
+            else:
+                self.big_last_update_label.config(text="never")
         self.after(1000, self._poll_last_update_label)
 
     def _minimize_ui(self):
