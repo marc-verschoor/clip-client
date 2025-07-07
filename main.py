@@ -301,6 +301,7 @@ class ClipboardSharerApp(tk.Tk):
         self.last_update_time = None
         self.last_update_source = None
         self._force_pull_mode = force_pull_mode
+        self._last_clipboard_sent = None  # For pull client echo suppression
         self._build_ui()
         # Set connect_to field from command-line/init
         if connect_to_init:
@@ -420,6 +421,9 @@ class ClipboardSharerApp(tk.Tk):
                         self.clipboard_sharer.notify_clients()
                         self.last_update_time = time.time()
                         self.last_update_source = "local"
+                        # For pull client: track last sent clipboard
+                        if self._force_pull_mode:
+                            self._last_clipboard_sent = content
                 else:
                     if not auto:
                         self._log("Clipboard is empty.")
@@ -455,8 +459,8 @@ class ClipboardSharerApp(tk.Tk):
                     if not message_bytes:
                         raise Exception("No clipboard data received from server")
                     received_content = message_bytes.decode('utf-8')
-                    # Only update if changed
-                    if received_content != getattr(self, '_last_pulled_clipboard', None):
+                    # Only update if changed and not echo of last sent
+                    if received_content != getattr(self, '_last_pulled_clipboard', None) and received_content != self._last_clipboard_sent:
                         self._log(f"[PULL] Clipboard changed, updating local clipboard.")
                         self._last_pulled_clipboard = received_content
                         # Parse and update clipboard
@@ -473,7 +477,7 @@ class ClipboardSharerApp(tk.Tk):
                                 self.last_update_time = time.time()
                                 self.last_update_source = "remote"
                     else:
-                        self._log(f"[PULL] Clipboard unchanged.")
+                        self._log(f"[PULL] Clipboard unchanged or echo of last sent.")
             except Exception as e:
                 self._log(f"[PULL] Polling failed: {e}")
         else:
