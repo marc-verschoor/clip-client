@@ -431,8 +431,10 @@ class ClipboardSharerApp(tk.Tk):
             host = self.clipboard_sharer.connect_to[0]
             port = self.clipboard_sharer.port
             try:
+                self._log(f"[PULL] Connecting to {host}:{port} to request clipboard...")
                 with socket.create_connection((host, port), timeout=2) as s:
                     s.sendall(b'PULL')
+                    self._log(f"[PULL] Sent PULL request to {host}:{port}")
                     # Expect a clipboard message as in _send_clipboard_to_client
                     header = s.recv(4)
                     if not header:
@@ -449,22 +451,25 @@ class ClipboardSharerApp(tk.Tk):
                     received_content = message_bytes.decode('utf-8')
                     # Only update if changed
                     if received_content != getattr(self, '_last_pulled_clipboard', None):
+                        self._log(f"[PULL] Clipboard changed, updating local clipboard.")
                         self._last_pulled_clipboard = received_content
                         # Parse and update clipboard
                         if received_content.startswith("FILE:"):
                             # Not supported in pull mode for now
-                            self._log("Received file in pull mode (not supported)")
+                            self._log("[PULL] Received file in pull mode (not supported)")
                         elif received_content.startswith("TEXT:"):
                             parts = received_content.split(":", 2)
                             if len(parts) == 3:
                                 clipboard_content = parts[2]
                                 self.clipboard_clear()
                                 self.clipboard_append(clipboard_content)
-                                self._log("Clipboard updated from remote (pull)")
+                                self._log("[PULL] Clipboard updated from remote (pull)")
                                 self.last_update_time = time.time()
                                 self.last_update_source = "remote"
+                    else:
+                        self._log(f"[PULL] Clipboard unchanged.")
             except Exception as e:
-                self._log(f"Pull polling failed: {e}")
+                self._log(f"[PULL] Polling failed: {e}")
         self.after(getattr(self, '_pull_poll_interval', 2) * 1000, self._pull_poll_clipboard)
 
     def _poll_clipboard_auto(self):
