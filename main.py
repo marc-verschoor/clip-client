@@ -318,10 +318,7 @@ class ClipboardSharerApp(tk.Tk):
             self._last_polled_clipboard = None
             self._poll_clipboard_auto()
         else:
-            self._log("[PULL] Polling thread started.")
-            self._pull_poll_interval = 2  # seconds
-            self._last_pulled_clipboard = None
-            self._pull_poll_clipboard()
+            self._log("[SERVER] No polling thread started (server mode, no --connect).")
 
     def _build_ui(self):
         self.attributes('-topmost', True)
@@ -434,14 +431,14 @@ class ClipboardSharerApp(tk.Tk):
                 self._log("Clipboard sharing is not started.")
 
     def _pull_poll_clipboard(self):
-        # Always use the current connect_to field for polling
+        # Only use the connect_to field at startup (do not monitor for changes)
         connect_to = [h.strip() for h in self.connect_var.get().split(',') if h.strip()]
         if connect_to:
             host = connect_to[0]
             port = self.clipboard_sharer.port if self.clipboard_sharer else DEFAULT_PORT
             try:
                 self._log(f"[PULL] Connecting to {host}:{port} to request clipboard...")
-                with socket.create_connection((host, port), timeout=2) as s:
+                with socket.create_connection((host, port), timeout=20) as s:
                     self._log(f"[PULL] Sent PULL request to {host}:{port}")
                     s.sendall(b'PULL')
                     # Expect a clipboard message as in _send_clipboard_to_client
