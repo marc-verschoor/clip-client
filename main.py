@@ -1,16 +1,5 @@
-Subject:
-clip_client
-From:
-VERSCHOOR Marc <marc.verschoor@ayvens.com>
-Date:
-7/1/25, 10:34
-To:
-Marc Verschoor <marc.j.verschoor@gmail.com>
-
-
 import socket
 import threading
-import argparse
 import sys
 import platform
 import time
@@ -20,8 +9,9 @@ import base64
 import os
 import struct
 from pathlib import Path
-from datetime import datetime
-from queue import Queue
+from queue import Queue, Empty
+import tkinter as tk
+from tkinter import ttk, messagebox, filedialog
 
 # Default configuration
 DEFAULT_PORT = 5000
@@ -30,10 +20,8 @@ CLIPBOARD_CHECK_INTERVAL = 1  # seconds
 POLLING_INTERVAL = 5         # seconds
 HEADER_SIZE = 4              # 4 bytes for message length
 
-
-
 class ClipboardSharer:
-    def __init__(self, host_ip, connect_to, port, nickname, watch_dir=None):
+    def __init__(self, host_ip, connect_to, port, nickname, watch_dir=None, gui_update_queue=None, clipboard_set_queue=None):
         self.shared_clipboard = ""
         self.connected_clients = []  # Each item: (client_address, client_socket)
         self.server_socket = None
@@ -45,19 +33,16 @@ class ClipboardSharer:
         self.ignore_next_clipboard_change = False
         self.client_nicknames = {}  # Map client addresses to nicknames
         self.watch_dir = watch_dir  # For macOS directory monitoring
+        self.gui_update_queue = gui_update_queue
+        self.clipboard_set_queue = clipboard_set_queue
 
-        # Set up networking and monitoring:
         self.start_server()
         self.connect_to_specified_hosts()
-        self.monitor_clipboard()
         if self.watch_dir and sys.platform == "darwin":
             self.monitor_directory(self.watch_dir)
         self.poll_for_updates()
 
-        print("ClipboardSharer initialized successfully.")
-
     def recvall(self, sock, n):
-        """Helper function to receive exactly n bytes or return None."""
         data = bytearray()
         while len(data) < n and not self.stop_event.is_set():
             packet = sock.recv(n - len(data))
@@ -67,9 +52,6 @@ class ClipboardSharer:
         return data
 
     def handle_client(self, client_socket, client_address):
-        """Receive data from a connected client and update the clipboard or save a file
-           using a 4-byte length-prefixed message framing protocol.
-        """
         try:
             while not self.stop_event.is_set():
                 header = self.recvall(client_socket, HEADER_SIZE)
@@ -82,12 +64,10 @@ class ClipboardSharer:
                 try:
                     received_content = message_bytes.decode('utf-8')
                 except UnicodeDecodeError as ude:
-                    print(f"Decoding error from {client_address}: {ude}")
+                    self._gui_log(f"Decoding error from {client_address}: {ude}")
                     continue
 
-                # Check for file transfer message.
                 if received_content.startswith("FILE:"):
-                    # Expected format: FILE:{filename}:{b64_data}
                     try:
                         parts = received_content.split(":", 2)
                         if len(parts) != 3:
@@ -100,14 +80,11 @@ class ClipboardSharer:
                         file_path = download_dir / filename
                         with open(file_path, "wb") as f:
                             f.write(file_data)
-                        # Only minimal output on receipt
-                        print(f"Received file: {filename}")
-                        self.gui_update_queue.put(('text', f"Received file: {filename}"))
+                        self._gui_log(f"Received file: {filename}")
                     except Exception as e:
-                        print(f"Error processing file transfer from {client_address}: {e}")
-                    continue  # Skip further processing for file messages.
+                        self._gui_log(f"Error processing file transfer from {client_address}: {e}")
+                    continue
                 elif received_content.startswith("TEXT:"):
-                    # Expected format: TEXT:{nickname}:{clipboard-content}
                     try:
                         parts = received_content.split(":", 2)
                         if len(parts) != 3:
@@ -118,7 +95,6 @@ class ClipboardSharer:
                         source = client_address[0]
                         clipboard_content = received_content
                 else:
-                    # Fallback behavior for compatibility with older messages.
                     try:
                         source, clipboard_content = received_content.split(":", 1)
                     except ValueError:
@@ -126,107 +102,94 @@ class ClipboardSharer:
                         clipboard_content = received_content
 
                 if clipboard_content != self.shared_clipboard:
-                    self.ignore_next_clipboard_change = True
-                    pyperclip.copy(clipboard_content)
+                    # Always queue clipboard set for main thread
+                    if self.clipboard_set_queue:
+                        self.clipboard_set_queue.put(clipboard_content)
                     self.shared_clipboard = clipboard_content
-                    print(f"Updating clipboard from source: {source}")
+                    self._gui_log(f"Clipboard updated from source: {source}")
+                else:
+                    self._gui_log(f"Clipboard content from source '{source}' is same as current clipboard. No update performed.")
         except Exception as e:
-            print(f"Error handling client {client_address}: {e}")
+            self._gui_log(f"Error handling client {client_address}: {e}")
         finally:
             client_socket.close()
             if (client_address, client_socket) in self.connected_clients:
                 self.connected_clients.remove((client_address, client_socket))
-            print(f"Connection closed with {client_address}")
+            self._gui_log(f"Connection closed with {client_address}")
 
     def start_server(self):
-        """Start a server socket to accept incoming connections."""
         try:
             self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             self.server_socket.bind((self.local_ip, self.port))
             self.server_socket.listen(5)
-            print(f"Server listening on {self.local_ip}:{self.port}")
+            self._gui_log(f"Server listening on {self.local_ip}:{self.port}")
             threading.Thread(target=self.accept_connections, daemon=True).start()
         except Exception as e:
-            print(f"Error starting server: {e}")
+            self._gui_log(f"Error starting server: {e}")
 
     def accept_connections(self):
-        """Accept incoming client connections."""
         while not self.stop_event.is_set():
             try:
                 client_socket, client_address = self.server_socket.accept()
-                print(f"Accepted connection from {client_address}")
+                self._gui_log(f"Accepted connection from {client_address}")
                 self.connected_clients.append((client_address, client_socket))
+                # Send current clipboard to just this client if not empty
+                if self.shared_clipboard:
+                    self._gui_log(f"Sending current clipboard to {client_address}")
+                    self._send_clipboard_to_client(client_socket)
                 threading.Thread(target=self.handle_client, args=(client_socket, client_address), daemon=True).start()
             except OSError as e:
                 if e.errno == 9:
-                    print("Server socket closed, stopping accept loop.")
+                    self._gui_log("Server socket closed, stopping accept loop.")
                     break
                 else:
-                    print(f"Error accepting connections: {e}")
+                    self._gui_log(f"Error accepting connections: {e}")
+
+    def _send_clipboard_to_client(self, client_socket):
+        if not self.shared_clipboard:
+            return
+        if os.path.isfile(self.shared_clipboard):
+            try:
+                with open(self.shared_clipboard, "rb") as f:
+                    file_data = f.read()
+                b64_data = base64.b64encode(file_data).decode('utf-8')
+                payload = f"FILE:{os.path.basename(self.shared_clipboard)}:{b64_data}"
+            except Exception as e:
+                self._gui_log(f"Error reading file '{os.path.basename(self.shared_clipboard)}': {e}")
+                return
+        else:
+            payload = f"TEXT:{self.nickname}:{self.shared_clipboard}"
+        message_bytes = payload.encode('utf-8')
+        header = struct.pack('!I', len(message_bytes))
+        framed_message = header + message_bytes
+        try:
+            client_socket.sendall(framed_message)
+        except Exception as e:
+            self._gui_log(f"Error sending clipboard to new client: {e}")
 
     def connect_to_specified_hosts(self):
-        """Attempt connections to hosts provided on the command line."""
         for host in self.connect_to:
             try:
                 client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 client_socket.connect((host, self.port))
                 self.connected_clients.append(((host, self.port), client_socket))
-                print(f"Connected to {host}:{self.port}")
+                self._gui_log(f"Connected to {host}:{self.port}")
                 threading.Thread(target=self.handle_client, args=(client_socket, (host, self.port)), daemon=True).start()
-                self.update_tray_icon()
+                # Force clipboard share on new connection if clipboard is not empty
+                if self.shared_clipboard:
+                    self._gui_log("Sharing clipboard with new client(s)...")
+                    self.notify_clients()
             except Exception as e:
-                print(f"Error connecting to {host}:{self.port} - {e}")
-
-    def get_clipboard_content_win32(self):
-        """Retrieve clipboard content using win32clipboard for Windows.
-           If clipboard contains file paths (CF_HDROP), return the first file path.
-        """
-        try:
-            import win32clipboard
-            import win32con
-        except ImportError:
-            print("win32clipboard not installed; falling back to pyperclip.")
-            return pyperclip.paste()
-        win32clipboard.OpenClipboard()
-        try:
-            if win32clipboard.IsClipboardFormatAvailable(win32con.CF_HDROP):
-                data = win32clipboard.GetClipboardData(win32con.CF_HDROP)
-                if data:
-                    # Return the full file path of the first file copied
-                    return data[0]
-            elif win32clipboard.IsClipboardFormatAvailable(win32con.CF_UNICODETEXT):
-                data = win32clipboard.GetClipboardData(win32con.CF_UNICODETEXT)
-                return data
-        except Exception as e:
-            print(f"Error accessing Windows clipboard: {e}")
-        finally:
-            win32clipboard.CloseClipboard()
-        return ""
+                self._gui_log(f"Error connecting to {host}:{self.port} - {e}")
 
     def monitor_clipboard(self):
-        """Continuously monitor the clipboard for changes."""
-        def clipboard_check():
-            while not self.stop_event.is_set():
-                try:
-                    current_clipboard_content = pyperclip.paste()
-                    if current_clipboard_content != self.shared_clipboard:
-                        if self.ignore_next_clipboard_change:
-                            self.ignore_next_clipboard_change = False
-                        else:
-                            self.shared_clipboard = current_clipboard_content
-                            print(f"Clipboard updated: {self.shared_clipboard}")
-                            self.notify_clients()
-                except Exception as e:
-                    print(f"Error monitoring clipboard: {e}")
-                finally:
-                    self.stop_event.wait(CLIPBOARD_CHECK_INTERVAL)
-        threading.Thread(target=clipboard_check, daemon=True).start()
+        pass  # Disabled clipboard polling/event-based monitoring for hotkey mode
+
+    def _start_polling_clipboard(self):
+        pass  # Disabled clipboard polling for hotkey mode
 
     def monitor_directory(self, directory):
-        """Monitor a specific directory (macOS) for new files to send.
-           This polling-based approach checks for new files every second.
-        """
         def directory_check():
             previously_seen = set(os.listdir(directory))
             while not self.stop_event.is_set():
@@ -236,31 +199,29 @@ class ClipboardSharer:
                     for filename in new_files:
                         full_path = os.path.join(directory, filename)
                         if os.path.isfile(full_path):
-                            # Treat the newly added file as clipboard content and notify clients.
                             self.shared_clipboard = full_path
-                            print(f"Detected new file in monitored directory: {filename}")
+                            self._gui_log(f"Detected new file in monitored directory: {filename}")
                             self.notify_clients()
                     previously_seen = current_files
                 except Exception as e:
-                    print(f"Error monitoring directory '{directory}': {e}")
+                    self._gui_log(f"Error monitoring directory '{directory}': {e}")
                 finally:
                     self.stop_event.wait(1)
         threading.Thread(target=directory_check, daemon=True).start()
 
     def notify_clients(self):
-        """Send the shared clipboard content to all connected clients.
-           If the clipboard content is a valid file path, send the file; otherwise send text.
-           The message is framed by a 4-byte header indicating the message length.
-        """
+        if not self.shared_clipboard:
+            self._gui_log("Clipboard is empty, nothing to share.")
+            return
         if os.path.isfile(self.shared_clipboard):
             try:
                 with open(self.shared_clipboard, "rb") as f:
                     file_data = f.read()
                 b64_data = base64.b64encode(file_data).decode('utf-8')
                 payload = f"FILE:{os.path.basename(self.shared_clipboard)}:{b64_data}"
-                print(f"Sending file: {os.path.basename(self.shared_clipboard)}")
+                self._gui_log(f"Sending file: {os.path.basename(self.shared_clipboard)}")
             except Exception as e:
-                print(f"Error reading file '{os.path.basename(self.shared_clipboard)}': {e}")
+                self._gui_log(f"Error reading file '{os.path.basename(self.shared_clipboard)}': {e}")
                 return
         else:
             payload = f"TEXT:{self.nickname}:{self.shared_clipboard}"
@@ -273,100 +234,280 @@ class ClipboardSharer:
             try:
                 client_socket.sendall(framed_message)
             except Exception as e:
-                print(f"Error notifying client: {e}")
+                self._gui_log(f"Error notifying client: {e}")
+
+    # Removed setup_hotkey: now handled by Tkinter binding in the main window
 
     def poll_for_updates(self):
-        """Periodically poll for updates (debug/logging purposes)."""
         def update_check():
             while not self.stop_event.is_set():
-                try:
-                    print("Polling for updates...")
-                    self.stop_event.wait(POLLING_INTERVAL)
-                except Exception as e:
-                    print(f"Error polling for updates: {e}")
+                self.stop_event.wait(POLLING_INTERVAL)
         threading.Thread(target=update_check, daemon=True).start()
 
     def quit_application(self):
-        """Cleanup and exit the application."""
-        print("Exiting ClipboardSharer...")
         self.stop_event.set()
         if self.server_socket:
             try:
                 self.server_socket.close()
-                print("Server socket closed.")
-            except Exception as e:
-                print(f"Error closing server socket: {e}")
+            except Exception:
+                pass
         for client_address, client_socket in self.connected_clients:
             try:
                 client_socket.close()
-                print(f"Closed connection with {client_address}")
-            except Exception as e:
-                print(f"Error closing client socket {client_address}: {e}")
+            except Exception:
+                pass
         self.connected_clients.clear()
-        sys.exit(0)
 
     def get_connected_clients_info(self):
-        """Return a string of connected client info (nickname or IP)."""
         clients_info = []
         for client_address, _ in self.connected_clients:
             client_nick = self.nickname if self.nickname else client_address[0]
             clients_info.append(client_nick)
         return ', '.join(clients_info)
 
-def get_default_interface_ip() -> str:
-    """
-    Determine the IP address bound to the default outbound interface.
+    def _gui_log(self, msg):
+        if self.gui_update_queue:
+            self.gui_update_queue.put(('log', msg))
 
-    This method opens a UDP socket to a well-known external address
-    (which never actually sends traffic) purely so the OS selects the
-    interface it would use; we then read the locally-bound address.
-    """
+
+def get_default_interface_ip() -> str:
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
-        # The IP/port below is irrelevant; no packets are sent.
         s.connect(("8.8.8.8", 80))
         return s.getsockname()[0]
     except Exception:
-        # Fallback to localhost if every attempt fails.
         return "127.0.0.1"
     finally:
         s.close()
 
-def parse_arguments():
-    parser = argparse.ArgumentParser(description="Clipboard Sharer")
-    parser.add_argument("--host", help="This machine's IP address. If omitted, it will be auto-detected.")
-    parser.add_argument("--connect", nargs="+", default=[], help="List of hostnames or IP addresses to connect to.")
-    parser.add_argument("--port", type=int, default=DEFAULT_PORT, help="Port for communication.")
-    parser.add_argument("--nick", help="Nickname for this host.")
-    # For macOS, allow specifying a directory to monitor for file transfers.
-    parser.add_argument("--watch-dir", help="Directory to monitor for new files (macOS only).")
-    return parser.parse_args()
+class ClipboardSharerApp(tk.Tk):
+    def __init__(self):
+        super().__init__()
+        self.title("Clipboard Sharer")
+        self.geometry("600x400")
+        self.protocol("WM_DELETE_WINDOW", self.on_quit)
+        self.gui_update_queue = Queue()
+        self.clipboard_set_queue = Queue()
+        self.clipboard_sharer = None
+        self.last_update_time = None
+        self.last_update_source = None
+        self._build_ui()
+        self._poll_gui_queue()
+        self._poll_clipboard_set_queue()
+        self._poll_last_update_label()
+        self.bind_all('<Control-Alt-c>', self._on_hotkey)
+        if not sys.platform.startswith('linux'):
+            self._last_polled_clipboard = None
+            self._poll_clipboard_auto()
 
+    def _build_ui(self):
+        self.attributes('-topmost', True)
+        self.normal_frame = ttk.Frame(self)
+        self.normal_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        # Clip button at the top
+        self.clip_btn = ttk.Button(self.normal_frame, text="Clip", command=self._on_clip_btn)
+        self.clip_btn.grid(row=0, column=0, pady=(0, 10), sticky=tk.W)
+        # Minimize button
+        self.min_btn = ttk.Button(self.normal_frame, text="Minimize", command=self._minimize_ui)
+        self.min_btn.grid(row=0, column=1, pady=(0, 10), sticky=tk.W)
+
+        # Host IP
+        ttk.Label(self.normal_frame, text="Host IP:").grid(row=1, column=0, sticky=tk.W)
+        self.host_var = tk.StringVar(value=get_default_interface_ip())
+        ttk.Entry(self.normal_frame, textvariable=self.host_var, width=20).grid(row=1, column=1, sticky=tk.W)
+
+        # Port
+        ttk.Label(self.normal_frame, text="Port:").grid(row=2, column=0, sticky=tk.W)
+        self.port_var = tk.IntVar(value=DEFAULT_PORT)
+        ttk.Entry(self.normal_frame, textvariable=self.port_var, width=8).grid(row=2, column=1, sticky=tk.W)
+
+        # Nickname
+        ttk.Label(self.normal_frame, text="Nickname:").grid(row=3, column=0, sticky=tk.W)
+        self.nick_var = tk.StringVar(value=platform.node())
+        ttk.Entry(self.normal_frame, textvariable=self.nick_var, width=20).grid(row=3, column=1, sticky=tk.W)
+
+        # Connect to
+        ttk.Label(self.normal_frame, text="Connect to (comma-separated):").grid(row=4, column=0, sticky=tk.W)
+        self.connect_var = tk.StringVar()
+        ttk.Entry(self.normal_frame, textvariable=self.connect_var, width=40).grid(row=4, column=1, sticky=tk.W)
+
+        # Watch dir (optional)
+        ttk.Label(self.normal_frame, text="Watch Dir (macOS):").grid(row=5, column=0, sticky=tk.W)
+        self.watch_dir_var = tk.StringVar()
+        ttk.Entry(self.normal_frame, textvariable=self.watch_dir_var, width=40).grid(row=5, column=1, sticky=tk.W)
+        ttk.Button(self.normal_frame, text="Browse", command=self._browse_dir).grid(row=5, column=2, sticky=tk.W)
+
+        # Quit button
+        self.quit_btn = ttk.Button(self.normal_frame, text="Quit", command=self.on_quit)
+        self.quit_btn.grid(row=6, column=0, pady=10)
+
+        # Connected clients
+        ttk.Label(self.normal_frame, text="Connected Clients:").grid(row=7, column=0, sticky=tk.W)
+        self.clients_var = tk.StringVar()
+        ttk.Label(self.normal_frame, textvariable=self.clients_var).grid(row=7, column=1, sticky=tk.W)
+
+        # Log area
+        self.log_text = tk.Text(self.normal_frame, height=10, width=70, state=tk.DISABLED)
+        self.log_text.grid(row=8, column=0, columnspan=3, pady=10)
+
+        # Minimized window (Toplevel, created on demand)
+        self.minimized_window = None
+
+    def _browse_dir(self):
+        dirname = filedialog.askdirectory()
+        if dirname:
+            self.watch_dir_var.set(dirname)
+
+    # Removed start_sharing and stop_sharing: sharing is always enabled
+
+    def on_quit(self):
+        if self.clipboard_sharer:
+            self.clipboard_sharer.quit_application()
+            self.clipboard_sharer = None
+        self.destroy()
+
+    def _log(self, msg):
+        self.log_text.config(state=tk.NORMAL)
+        self.log_text.insert(tk.END, msg + '\n')
+        self.log_text.see(tk.END)
+        self.log_text.config(state=tk.DISABLED)
+
+    def _poll_gui_queue(self):
+        try:
+            while True:
+                msg_type, msg = self.gui_update_queue.get_nowait()
+                if msg_type == 'log':
+                    self._log(msg)
+                elif msg_type == 'text':
+                    self._log(msg)
+        except Empty:
+            pass
+        if self.clipboard_sharer:
+            self.clients_var.set(self.clipboard_sharer.get_connected_clients_info())
+        self.after(200, self._poll_gui_queue)
+
+    def _on_clip_btn(self, auto=False):
+        if self.clipboard_sharer:
+            try:
+                content = pyperclip.paste()
+                if content:
+                    if content != self.clipboard_sharer.shared_clipboard:
+                        self.clipboard_sharer.shared_clipboard = content
+                        if auto:
+                            self._log("Clipboard changed: sharing clipboard content.")
+                        else:
+                            self._log("Clip button pressed: sharing clipboard content.")
+                        self.clipboard_sharer.notify_clients()
+                        self.last_update_time = time.time()
+                        self.last_update_source = "local"
+                else:
+                    if not auto:
+                        self._log("Clipboard is empty.")
+            except Exception as e:
+                if not auto:
+                    self._log(f"Error reading clipboard: {e}")
+        else:
+            if not auto:
+                self._log("Clipboard sharing is not started.")
+
+    def _poll_clipboard_auto(self):
+        try:
+            content = pyperclip.paste()
+            if getattr(self, '_ignore_next_clipboard_poll', False):
+                self._ignore_next_clipboard_poll = False
+                self._last_polled_clipboard = content
+            elif content != getattr(self, '_last_polled_clipboard', None):
+                self._last_polled_clipboard = content
+                self._on_clip_btn(auto=True)
+        except Exception:
+            pass
+        self.after(1000, self._poll_clipboard_auto)
+
+    def _poll_clipboard_set_queue(self):
+        try:
+            while True:
+                content = self.clipboard_set_queue.get_nowait()
+                self.clipboard_clear()
+                self.clipboard_append(content)
+                self._ignore_next_clipboard_poll = True
+                self._log("Clipboard updated from remote.")
+                self.last_update_time = time.time()
+                self.last_update_source = "remote"
+        except Empty:
+            pass
+        self.after(200, self._poll_clipboard_set_queue)
+
+    def _poll_last_update_label(self):
+        if hasattr(self, 'minimized_window') and self.minimized_window is not None and hasattr(self, 'min_last_update_label'):
+            if self.last_update_time:
+                elapsed = int(time.time() - self.last_update_time)
+                src = self.last_update_source or "unknown"
+                self.min_last_update_label.config(text=f"{elapsed}s ago from {src}")
+            else:
+                self.min_last_update_label.config(text="never")
+        self.after(1000, self._poll_last_update_label)
+
+    def _minimize_ui(self):
+        # Hide main window
+        self.withdraw()
+        # Create minimized window if not already
+        if not hasattr(self, 'minimized_window') or self.minimized_window is None:
+            self.minimized_window = tk.Toplevel()
+            self.minimized_window.geometry("220x80")
+            self.minimized_window.overrideredirect(True)
+            self.minimized_window.attributes('-topmost', True)
+            # Clip button
+            min_clip_btn = ttk.Button(self.minimized_window, text="Clip", command=self._on_clip_btn)
+            min_clip_btn.grid(row=0, column=0, padx=5, pady=5)
+            # Restore button
+            restore_btn = ttk.Button(self.minimized_window, text="Restore", command=self._restore_ui)
+            restore_btn.grid(row=0, column=1, padx=5, pady=5)
+            # Last updated label
+            import tkinter.font as tkfont
+            small_font = tkfont.Font(size=8)
+            self.min_last_update_label = ttk.Label(self.minimized_window, text="never", font=small_font)
+            self.min_last_update_label.grid(row=1, column=0, columnspan=2, pady=(2, 0))
+            self.minimized_window.protocol("WM_DELETE_WINDOW", self.on_quit)
+            # Add drag support
+            self._add_drag_support(self.minimized_window)
+        else:
+            self.minimized_window.deiconify()
+
+    def _add_drag_support(self, window):
+        def start_move(event):
+            window._drag_start_x = event.x
+            window._drag_start_y = event.y
+        def do_move(event):
+            x = window.winfo_x() + event.x - window._drag_start_x
+            y = window.winfo_y() + event.y - window._drag_start_y
+            window.geometry(f"+{x}+{y}")
+        window.bind('<Button-1>', start_move)
+        window.bind('<B1-Motion>', do_move)
+        # Also bind to all children (buttons)
+        for child in window.winfo_children():
+            child.bind('<Button-1>', start_move)
+            child.bind('<B1-Motion>', do_move)
+
+    def _restore_ui(self):
+        if hasattr(self, 'minimized_window') and self.minimized_window is not None:
+            self.minimized_window.destroy()
+            self.minimized_window = None
+        self.deiconify()
+        self.normal_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        self.geometry("600x400")
+        self.overrideredirect(False)
+
+    def _on_hotkey(self, event=None):
+        self._on_clip_btn(auto=False)
 
 if __name__ == "__main__":
-    print("Parsing arguments...")
-    args = parse_arguments()
-
-    # Auto-detect host IP if not provided
-    if not args.host:
-        args.host = get_default_interface_ip()
-        print(f"No --host supplied; using detected IP: {args.host}")
-
-    # Auto-detect nickname if not provided
-    if not args.nick:
-        args.nick = platform.node()
-        print(f"No --nick supplied; using machine name: {args.nick}")
-
-    print("Initializing ClipboardSharer...")
-    clipboard_sharer = ClipboardSharer(args.host, args.connect, args.port, args.nick, watch_dir=args.watch_dir)
-
-    # Set SIGINT handler in the main thread for CTRL+C.
-    signal.signal(signal.SIGINT, lambda sig, frame: clipboard_sharer.quit_application())
-
-    # Without UI components, keep the main thread alive with a simple loop.
-    try:
-        while True:
-            time.sleep(1)
-    except KeyboardInterrupt:
-        clipboard_sharer.quit_application()
-
+    app = ClipboardSharerApp()
+    # Automatically start sharing on launch
+    host = app.host_var.get()
+    port = app.port_var.get()
+    nick = app.nick_var.get()
+    connect_to = [h.strip() for h in app.connect_var.get().split(',') if h.strip()]
+    watch_dir = app.watch_dir_var.get() or None
+    app.clipboard_sharer = ClipboardSharer(host, connect_to, port, nick, watch_dir, gui_update_queue=app.gui_update_queue, clipboard_set_queue=app.clipboard_set_queue)
+    app._log("Clipboard sharing started.")
+    app.mainloop()
