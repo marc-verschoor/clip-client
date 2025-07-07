@@ -383,6 +383,7 @@ class ClipboardSharerApp(tk.Tk):
         if dirname:
             self.watch_dir_var.set(dirname)
 
+
     # Removed start_sharing and stop_sharing: sharing is always enabled
 
     def on_quit(self):
