@@ -290,7 +290,7 @@ def get_default_interface_ip() -> str:
         s.close()
 
 class ClipboardSharerApp(tk.Tk):
-    def __init__(self):
+    def __init__(self, connect_to_init=None, force_pull_mode=False):
         super().__init__()
         self.title("Clipboard Sharer")
         self.geometry("600x400")
@@ -300,16 +300,25 @@ class ClipboardSharerApp(tk.Tk):
         self.clipboard_sharer = None
         self.last_update_time = None
         self.last_update_source = None
+        self._force_pull_mode = force_pull_mode
         self._build_ui()
+        # Set connect_to field from command-line/init
+        if connect_to_init:
+            self.connect_var.set(", ".join(connect_to_init))
         self._poll_gui_queue()
         self._poll_clipboard_set_queue()
         self._poll_last_update_label()
         self.bind_all('<Control-Alt-c>', self._on_hotkey)
-        if not sys.platform.startswith('linux'):
+        if self._force_pull_mode:
+            self._log("[PULL] Polling thread started (forced by --connect).")
+            self._pull_poll_interval = 2  # seconds
+            self._last_pulled_clipboard = None
+            self._pull_poll_clipboard()
+        elif not sys.platform.startswith('linux'):
             self._last_polled_clipboard = None
             self._poll_clipboard_auto()
         else:
-            # On Linux, always start pull polling (use current connect_to field)
+            self._log("[PULL] Polling thread started.")
             self._pull_poll_interval = 2  # seconds
             self._last_pulled_clipboard = None
             self._pull_poll_clipboard()
@@ -433,8 +442,8 @@ class ClipboardSharerApp(tk.Tk):
             try:
                 self._log(f"[PULL] Connecting to {host}:{port} to request clipboard...")
                 with socket.create_connection((host, port), timeout=2) as s:
-                    s.sendall(b'PULL')
                     self._log(f"[PULL] Sent PULL request to {host}:{port}")
+                    s.sendall(b'PULL')
                     # Expect a clipboard message as in _send_clipboard_to_client
                     header = s.recv(4)
                     if not header:
@@ -470,6 +479,8 @@ class ClipboardSharerApp(tk.Tk):
                         self._log(f"[PULL] Clipboard unchanged.")
             except Exception as e:
                 self._log(f"[PULL] Polling failed: {e}")
+        else:
+            self._log("[PULL] No server address set in 'Connect to' field.")
         self.after(getattr(self, '_pull_poll_interval', 2) * 1000, self._pull_poll_clipboard)
 
     def _poll_clipboard_auto(self):
@@ -563,13 +574,24 @@ class ClipboardSharerApp(tk.Tk):
         self._on_clip_btn(auto=False)
 
 if __name__ == "__main__":
-    app = ClipboardSharerApp()
+    # Parse command-line args for connect_to
+    import argparse
+    parser = argparse.ArgumentParser(description="Clipboard Sharer")
+    parser.add_argument("--host", help="This machine's IP address. If omitted, it will be auto-detected.")
+    parser.add_argument("--connect", nargs="+", default=[], help="List of hostnames or IP addresses to connect to.")
+    parser.add_argument("--port", type=int, default=DEFAULT_PORT, help="Port for communication.")
+    parser.add_argument("--nick", help="Nickname for this host.")
+    parser.add_argument("--watch-dir", help="Directory to monitor for new files (macOS only).")
+    args = parser.parse_args()
+
+    force_pull_mode = bool(args.connect)
+    app = ClipboardSharerApp(connect_to_init=args.connect, force_pull_mode=force_pull_mode)
     # Automatically start sharing on launch
-    host = app.host_var.get()
-    port = app.port_var.get()
-    nick = app.nick_var.get()
-    connect_to = [h.strip() for h in app.connect_var.get().split(',') if h.strip()]
-    watch_dir = app.watch_dir_var.get() or None
+    host = app.host_var.get() or args.host or get_default_interface_ip()
+    port = app.port_var.get() or args.port
+    nick = app.nick_var.get() or args.nick or platform.node()
+    connect_to = [h.strip() for h in app.connect_var.get().split(',') if h.strip()] or args.connect
+    watch_dir = app.watch_dir_var.get() or args.watch_dir
     app.clipboard_sharer = ClipboardSharer(host, connect_to, port, nick, watch_dir, gui_update_queue=app.gui_update_queue, clipboard_set_queue=app.clipboard_set_queue)
     app._log("Clipboard sharing started.")
     app.mainloop()
