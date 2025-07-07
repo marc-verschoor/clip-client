@@ -496,7 +496,12 @@ class ClipboardSharerApp(tk.Tk):
         try:
             content = pyperclip.paste()
             self._log(f"[DEBUG] Polled clipboard: '{content}' (last: '{getattr(self, '_last_polled_clipboard', None)}')")
-            if getattr(self, '_ignore_next_clipboard_poll', False):
+            # Echo suppression: if clipboard matches last remote, skip and clear
+            if hasattr(self, '_last_remote_clipboard') and content == getattr(self, '_last_remote_clipboard', None):
+                self._log("[DEBUG] Clipboard matches last remote update, suppressing echo.")
+                self._last_polled_clipboard = content
+                self._last_remote_clipboard = None
+            elif getattr(self, '_ignore_next_clipboard_poll', False):
                 self._ignore_next_clipboard_poll = False
                 self._last_polled_clipboard = content
             elif content != getattr(self, '_last_polled_clipboard', None):
@@ -514,6 +519,7 @@ class ClipboardSharerApp(tk.Tk):
                 self.clipboard_clear()
                 self.clipboard_append(content)
                 self._ignore_next_clipboard_poll = True
+                self._last_remote_clipboard = content  # For echo suppression
                 self._log("Clipboard updated from remote.")
                 self.last_update_time = time.time()
                 # Try to extract nick from content
