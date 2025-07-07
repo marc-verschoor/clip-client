@@ -585,6 +585,7 @@ if __name__ == "__main__":
     parser.add_argument("--watch-dir", help="Directory to monitor for new files (macOS only).")
     args = parser.parse_args()
 
+
     force_pull_mode = bool(args.connect)
     app = ClipboardSharerApp(connect_to_init=args.connect, force_pull_mode=force_pull_mode)
     # Automatically start sharing on launch
