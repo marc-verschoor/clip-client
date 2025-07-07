@@ -495,14 +495,16 @@ class ClipboardSharerApp(tk.Tk):
     def _poll_clipboard_auto(self):
         try:
             content = pyperclip.paste()
+            self._log(f"[DEBUG] Polled clipboard: '{content}' (last: '{getattr(self, '_last_polled_clipboard', None)}')")
             if getattr(self, '_ignore_next_clipboard_poll', False):
                 self._ignore_next_clipboard_poll = False
                 self._last_polled_clipboard = content
             elif content != getattr(self, '_last_polled_clipboard', None):
+                self._log("[DEBUG] Clipboard change detected, sharing...")
                 self._last_polled_clipboard = content
                 self._on_clip_btn(auto=True)
-        except Exception:
-            pass
+        except Exception as e:
+            self._log(f"[DEBUG] Exception in clipboard polling: {e}")
         self.after(1000, self._poll_clipboard_auto)
 
     def _poll_clipboard_set_queue(self):
