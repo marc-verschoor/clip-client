@@ -54,6 +54,15 @@ class ClipboardSharer:
     def handle_client(self, client_socket, client_address):
         try:
             while not self.stop_event.is_set():
+                # Peek at the first 4 bytes to see if this is a PULL request
+                peek = client_socket.recv(4, socket.MSG_PEEK)
+                if peek == b'PULL':
+                    # Consume the PULL request
+                    client_socket.recv(4)
+                    # Respond with clipboard
+                    self._gui_log(f"Received PULL request from {client_address}")
+                    self._send_clipboard_to_client(client_socket)
+                    break
                 header = self.recvall(client_socket, HEADER_SIZE)
                 if not header:
                     break
@@ -299,6 +308,12 @@ class ClipboardSharerApp(tk.Tk):
         if not sys.platform.startswith('linux'):
             self._last_polled_clipboard = None
             self._poll_clipboard_auto()
+        else:
+            # On Linux, if connect_to is set, start pull polling
+            if self.clipboard_sharer and self.clipboard_sharer.connect_to:
+                self._pull_poll_interval = 2  # seconds
+                self._last_pulled_clipboard = None
+                self._pull_poll_clipboard()
 
     def _build_ui(self):
         self.attributes('-topmost', True)
@@ -409,6 +424,48 @@ class ClipboardSharerApp(tk.Tk):
         else:
             if not auto:
                 self._log("Clipboard sharing is not started.")
+
+    def _pull_poll_clipboard(self):
+        # Only poll the first connect_to host
+        if self.clipboard_sharer and self.clipboard_sharer.connect_to:
+            host = self.clipboard_sharer.connect_to[0]
+            port = self.clipboard_sharer.port
+            try:
+                with socket.create_connection((host, port), timeout=2) as s:
+                    s.sendall(b'PULL')
+                    # Expect a clipboard message as in _send_clipboard_to_client
+                    header = s.recv(4)
+                    if not header:
+                        raise Exception("No clipboard header received from server")
+                    msg_length = struct.unpack('!I', header)[0]
+                    message_bytes = b''
+                    while len(message_bytes) < msg_length:
+                        chunk = s.recv(msg_length - len(message_bytes))
+                        if not chunk:
+                            break
+                        message_bytes += chunk
+                    if not message_bytes:
+                        raise Exception("No clipboard data received from server")
+                    received_content = message_bytes.decode('utf-8')
+                    # Only update if changed
+                    if received_content != getattr(self, '_last_pulled_clipboard', None):
+                        self._last_pulled_clipboard = received_content
+                        # Parse and update clipboard
+                        if received_content.startswith("FILE:"):
+                            # Not supported in pull mode for now
+                            self._log("Received file in pull mode (not supported)")
+                        elif received_content.startswith("TEXT:"):
+                            parts = received_content.split(":", 2)
+                            if len(parts) == 3:
+                                clipboard_content = parts[2]
+                                self.clipboard_clear()
+                                self.clipboard_append(clipboard_content)
+                                self._log("Clipboard updated from remote (pull)")
+                                self.last_update_time = time.time()
+                                self.last_update_source = "remote"
+            except Exception as e:
+                self._log(f"Pull polling failed: {e}")
+        self.after(getattr(self, '_pull_poll_interval', 2) * 1000, self._pull_poll_clipboard)
 
     def _poll_clipboard_auto(self):
         try:
