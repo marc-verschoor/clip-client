@@ -4,6 +4,7 @@ import sys
 import platform
 import time
 import pyperclip
+from clipboard_utils import get_clipboard_content, set_clipboard_content
 import signal
 import base64
 import os
@@ -93,6 +94,18 @@ class ClipboardSharer:
                     except Exception as e:
                         self._gui_log(f"Error processing file transfer from {client_address}: {e}")
                     continue
+                elif received_content.startswith("BINARY:"):
+                    try:
+                        parts = received_content.split(":", 2)
+                        if len(parts) != 3:
+                            raise ValueError("Invalid binary message format")
+                        source = parts[1]
+                        b64_data = parts[2]
+                        binary_data = base64.b64decode(b64_data)
+                        clipboard_content = ("BINARY", binary_data)
+                    except Exception as e:
+                        self._gui_log(f"Error processing binary clipboard from {client_address}: {e}")
+                        continue
                 elif received_content.startswith("TEXT:"):
                     try:
                         parts = received_content.split(":", 2)
@@ -158,7 +171,11 @@ class ClipboardSharer:
     def _send_clipboard_to_client(self, client_socket):
         if not self.shared_clipboard:
             return
-        if os.path.isfile(self.shared_clipboard):
+        if isinstance(self.shared_clipboard, tuple) and self.shared_clipboard[0] == "BINARY":
+            # Send binary (image) clipboard
+            b64_data = base64.b64encode(self.shared_clipboard[1]).decode('utf-8')
+            payload = f"BINARY:{self.nickname}:{b64_data}"
+        elif os.path.isfile(self.shared_clipboard):
             try:
                 with open(self.shared_clipboard, "rb") as f:
                     file_data = f.read()
@@ -222,7 +239,11 @@ class ClipboardSharer:
         if not self.shared_clipboard:
             self._gui_log("Clipboard is empty, nothing to share.")
             return
-        if os.path.isfile(self.shared_clipboard):
+        if isinstance(self.shared_clipboard, tuple) and self.shared_clipboard[0] == "BINARY":
+            b64_data = base64.b64encode(self.shared_clipboard[1]).decode('utf-8')
+            payload = f"BINARY:{self.nickname}:{b64_data}"
+            self._gui_log("Sending binary clipboard (image)")
+        elif os.path.isfile(self.shared_clipboard):
             try:
                 with open(self.shared_clipboard, "rb") as f:
                     file_data = f.read()
@@ -430,23 +451,29 @@ class ClipboardSharerApp(tk.Tk):
     def _on_clip_btn(self, auto=False):
         if self.clipboard_sharer:
             try:
-                content = pyperclip.paste()
-                if content:
-                    if content != self.clipboard_sharer.shared_clipboard:
-                        self.clipboard_sharer.shared_clipboard = content
-                        if auto:
-                            self._log("Clipboard changed: sharing clipboard content.")
-                        else:
-                            self._log("Clip button pressed: sharing clipboard content.")
-                        threading.Thread(target=self.clipboard_sharer.notify_clients, daemon=True).start()
-                        self.last_update_time = time.time()
-                        self.last_update_source = "local"
-                        # For pull client: track last sent clipboard
-                        if self._force_pull_mode:
-                            self._last_clipboard_sent = content
-                else:
+                ctype, cdata = get_clipboard_content()
+                if ctype == "none" or not cdata:
                     if not auto:
                         self._log("Clipboard is empty.")
+                    return
+                # For text, use as-is; for image, store as tuple
+                if ctype == "text":
+                    content = cdata
+                elif ctype == "image":
+                    content = ("BINARY", cdata)
+                else:
+                    content = cdata
+                if content != self.clipboard_sharer.shared_clipboard:
+                    self.clipboard_sharer.shared_clipboard = content
+                    if auto:
+                        self._log("Clipboard changed: sharing clipboard content.")
+                    else:
+                        self._log("Clip button pressed: sharing clipboard content.")
+                    threading.Thread(target=self.clipboard_sharer.notify_clients, daemon=True).start()
+                    self.last_update_time = time.time()
+                    self.last_update_source = "local"
+                    if self._force_pull_mode:
+                        self._last_clipboard_sent = content
             except Exception as e:
                 if not auto:
                     self._log(f"Error reading clipboard: {e}")
@@ -528,15 +555,18 @@ class ClipboardSharerApp(tk.Tk):
         try:
             while True:
                 content = self.clipboard_set_queue.get_nowait()
-                self.clipboard_clear()
-                self.clipboard_append(content)
+                # If content is a tuple ("BINARY", data), set as image
+                if isinstance(content, tuple) and content[0] == "BINARY":
+                    set_clipboard_content("image", content[1])
+                else:
+                    set_clipboard_content("text", content)
                 self._ignore_next_clipboard_poll = True
                 self._last_remote_clipboard = content  # For echo suppression
                 self._log("Clipboard updated from remote.")
                 self.last_update_time = time.time()
                 # Try to extract nick from content
                 nick = None
-                if content.startswith("TEXT:"):
+                if isinstance(content, str) and content.startswith("TEXT:"):
                     parts = content.split(":", 2)
                     if len(parts) == 3:
                         nick = parts[1]
