@@ -52,6 +52,7 @@ class ClipboardSharer:
             data.extend(packet)
         return data
 
+
     def handle_client(self, client_socket, client_address):
         try:
             while not self.stop_event.is_set():
