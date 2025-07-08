@@ -1,3 +1,4 @@
+import logging
 import socket
 import threading
 import sys
@@ -13,6 +14,7 @@ from pathlib import Path
 from queue import Queue, Empty
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
+import logging
 
 # Default configuration
 DEFAULT_PORT = 5000
@@ -20,7 +22,7 @@ BUFFER_SIZE = 10 * 1024 * 1024
 CLIPBOARD_CHECK_INTERVAL = 1  # seconds
 POLLING_INTERVAL = 5         # seconds
 HEADER_SIZE = 4              # 4 bytes for message length
-
+logging.basicConfig(level=logging.DEBUG)
 class ClipboardSharer:
     def __init__(self, host_ip, connect_to, port, nickname, watch_dir=None, gui_update_queue=None, clipboard_set_queue=None):
         self.shared_clipboard = ""
